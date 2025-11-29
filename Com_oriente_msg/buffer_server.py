@@ -1,26 +1,51 @@
 from xmlrpc.server import SimpleXMLRPCServer
+import sys
 
-message_buffer = None  # Buffer partagé
+# messages stored as dicts: {'sender': idprod, 'recipient': iddest, 'content': contenu}
+messages = []
 
-def produire(msg):
-    global message_buffer
-    print("Producteur a déposé :", msg)
-    message_buffer = msg
-    return "Message déposé"
+def production(idproducteur, contenu, iddestinataire):
+    
+    msg = {'sender': idproducteur, 'recipient': iddestinataire, 'content': contenu}
+    messages.append(msg)
+    print(f"Producteur {idproducteur} a déposé pour {iddestinataire}: {contenu}")
+    return {'status': 'ok', 'stored': msg}
 
-def consommer():
-    global message_buffer
-    if message_buffer is None:
-        return "Aucun message disponible"
-    msg = message_buffer
-    message_buffer = None  # Vider le buffer (1 seul message consommable)
-    print("Consommateur a lu :", msg)
-    return msg
+def consommateur(idconsommateur):
+    """Retourne et supprime tous les messages destinés à `idconsommateur`."""
+    found = [m for m in messages if m.get('recipient') == idconsommateur]
+    if not found:
+        print(f"Aucun message pour {idconsommateur}")
+        return []
+    # remove delivered messages
+    remaining = [m for m in messages if m.get('recipient') != idconsommateur]
+    messages.clear()
+    messages.extend(remaining)
+    print(f"Consommateur {idconsommateur} a lu {len(found)} message(s)")
+    return found
 
-server = SimpleXMLRPCServer(('10.163.15.115', 9000))
-print("Serveur tampon actif sur port 9000...")
+def _preload_message(spec):
+    # expected format: sender|recipient|content
+    parts = spec.split('|', 2)
+    if len(parts) == 3:
+        messages.append({'sender': parts[0], 'recipient': parts[1], 'content': parts[2]})
 
-server.register_function(produire, "produire")
-server.register_function(consommer, "consommer")
+def main():
+    # CLI: buffer_server.py [ip] [msg1] [msg2] ... where msgN is sender|recipient|content
+    bind_ip = '10.163.15.115'
+    if len(sys.argv) >= 2:
+        bind_ip = sys.argv[1]
+    if len(sys.argv) > 2:
+        for spec in sys.argv[2:]:
+            _preload_message(spec)
 
-server.serve_forever()
+    server = SimpleXMLRPCServer((bind_ip, 9000), allow_none=True)
+    print(f"Serveur tampon actif sur {bind_ip}:9000...")
+
+    server.register_function(production, "production")
+    server.register_function(consommateur, "consommateur")
+
+    server.serve_forever()
+
+if __name__ == '__main__':
+    main()
